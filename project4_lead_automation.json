@@ -1,0 +1,379 @@
+{
+  "name": "AI Sales Lead Automation System",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-capture",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-lead",
+      "name": "Webhook — Lead Capture",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [140, 300],
+      "webhookId": "lead-capture-hook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "email-check",
+              "leftValue": "={{ $json.body.email }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "name-check",
+              "leftValue": "={{ $json.body.name }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [360, 300]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o"
+        },
+        "options": {
+          "temperature": 0.2,
+          "maxTokens": 600
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a sales lead qualification expert.\nAnalyze the lead information and return ONLY valid JSON:\n{\n  \"qualification\": \"<Hot | Warm | Cold>\",\n  \"score\": <1-10>,\n  \"reason\": \"<one sentence why>\",\n  \"recommended_action\": \"<call immediately | nurture | add to newsletter>\",\n  \"personalized_email_opening\": \"<2 sentence personalized opener for welcome email>\"\n}\n\nHot = High budget + urgent need + decision maker\nWarm = Some interest but not ready to buy\nCold = Low budget or not decision maker\n\nReturn ONLY valid JSON. No extra text."
+            },
+            {
+              "role": "user",
+              "content": "=Name: {{ $json.body.name }}\nCompany: {{ $json.body.company || 'Not provided' }}\nEmail: {{ $json.body.email }}\nBudget: {{ $json.body.budget || 'Not specified' }}\nMessage: {{ $json.body.message || 'No message' }}\nSource: {{ $json.body.source || 'Website' }}"
+            }
+          ]
+        }
+      },
+      "id": "gpt-qualify",
+      "name": "GPT-4o — Qualify Lead",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.4,
+      "position": [580, 200],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-creds",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.item.json.message.content;\nlet parsed;\ntry {\n  parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());\n} catch(e) {\n  throw new Error('GPT bad JSON: ' + raw);\n}\n\nconst lead = $('Validate Input').item.json.body;\n\nreturn {\n  json: {\n    name: lead.name,\n    email: lead.email,\n    company: lead.company || 'Not provided',\n    budget: lead.budget || 'Not specified',\n    message: lead.message || '',\n    source: lead.source || 'Website',\n    qualification: parsed.qualification,\n    score: parsed.score,\n    reason: parsed.reason,\n    recommended_action: parsed.recommended_action,\n    email_opening: parsed.personalized_email_opening,\n    submitted_at: new Date().toISOString()\n  }\n};"
+      },
+      "id": "format-output",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [800, 200]
+    },
+    {
+      "parameters": {
+        "resource": "contact",
+        "operation": "create",
+        "additionalFields": {
+          "properties": {
+            "values": [
+              {
+                "name": "email",
+                "value": "={{ $json.email }}"
+              },
+              {
+                "name": "firstname",
+                "value": "={{ $json.name.split(' ')[0] }}"
+              },
+              {
+                "name": "lastname",
+                "value": "={{ $json.name.split(' ').slice(1).join(' ') || '' }}"
+              },
+              {
+                "name": "company",
+                "value": "={{ $json.company }}"
+              },
+              {
+                "name": "hs_lead_status",
+                "value": "={{ $json.qualification }}"
+              },
+              {
+                "name": "message",
+                "value": "={{ $json.reason }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "hubspot-contact",
+      "name": "HubSpot — Create Contact",
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2,
+      "position": [1020, 200],
+      "credentials": {
+        "hubspotApi": {
+          "id": "hubspot-creds",
+          "name": "HubSpot API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.email }}",
+        "subject": "Welcome to Beyondles — We received your inquiry",
+        "emailType": "text",
+        "message": "=Hi {{ $json.name }},\n\n{{ $json.email_opening }}\n\nThank you for reaching out to Beyondles. We specialize in AI automation systems that save businesses 8-10 hours per week.\n\nWe have received your inquiry and will be in touch within 24 hours.\n\nBest regards,\nAbdullah\nBeyondles AI\nabdullah.me.dev@gmail.com",
+        "options": {}
+      },
+      "id": "gmail-welcome",
+      "name": "Gmail — Welcome Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [1240, 200],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-creds",
+          "name": "Gmail Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "channel": "#sales-leads",
+        "text": "=*New Lead — {{ $json.qualification }} {{ $json.qualification === 'Hot' ? '🔥' : $json.qualification === 'Warm' ? '🟡' : '🔵' }}*\n\n*Name:* {{ $json.name }}\n*Company:* {{ $json.company }}\n*Email:* {{ $json.email }}\n*Budget:* {{ $json.budget }}\n*Score:* {{ $json.score }}/10\n*Action:* {{ $json.recommended_action }}\n*Reason:* {{ $json.reason }}\n*Source:* {{ $json.source }}\n*Time:* {{ $json.submitted_at }}",
+        "options": {}
+      },
+      "id": "slack-alert",
+      "name": "Slack — Sales Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [1460, 200],
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "slack-creds",
+          "name": "Slack Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_GOOGLE_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Name": "={{ $json.name }}",
+            "Email": "={{ $json.email }}",
+            "Company": "={{ $json.company }}",
+            "Budget": "={{ $json.budget }}",
+            "Qualification": "={{ $json.qualification }}",
+            "Score": "={{ $json.score }}",
+            "Reason": "={{ $json.reason }}",
+            "Action": "={{ $json.recommended_action }}",
+            "Source": "={{ $json.source }}",
+            "Date": "={{ $json.submitted_at }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "sheets-log",
+      "name": "Google Sheets — Log Lead",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [1680, 200],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "sheets-creds",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"success\",\n  \"message\": \"Lead received and processed successfully\",\n  \"qualification\": \"{{ $json.qualification }}\",\n  \"score\": {{ $json.score }},\n  \"action\": \"{{ $json.recommended_action }}\"\n}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-200",
+      "name": "Respond — 200 OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1900, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"error\",\n  \"code\": \"MISSING_FIELDS\",\n  \"message\": \"Name and email are required fields\"\n}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-400",
+      "name": "Respond — 400 Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [580, 420]
+    }
+  ],
+  "connections": {
+    "Webhook — Lead Capture": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "GPT-4o — Qualify Lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond — 400 Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT-4o — Qualify Lead": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Output": {
+      "main": [
+        [
+          {
+            "node": "HubSpot — Create Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot — Create Contact": {
+      "main": [
+        [
+          {
+            "node": "Gmail — Welcome Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail — Welcome Email": {
+      "main": [
+        [
+          {
+            "node": "Slack — Sales Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack — Sales Alert": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets — Log Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets — Log Lead": {
+      "main": [
+        [
+          {
+            "node": "Respond — 200 OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "tags": ["portfolio", "lead-automation", "ai", "sales"]
+}
